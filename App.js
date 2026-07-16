@@ -6,6 +6,7 @@ import {
   TouchableOpacity, 
   StatusBar, 
   Platform, 
+  AppState,
   Dimensions 
 } from 'react-native';
 import * as Notifications from 'expo-notifications';
@@ -14,7 +15,7 @@ import { Play, Square } from 'lucide-react-native';
 const { width } = Dimensions.get('window');
 const TIMER_SIZE = width * 0.75;
 
-// Configure how notifications are handled when the app is in the foreground
+// Forces full popup banner alert + audio playback even if app is foreground/minimized
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -24,32 +25,71 @@ Notifications.setNotificationHandler({
 });
 
 export default function App() {
-  // Configuration: 0 to 60 minutes in 5-minute intervals
-  const intervals = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
-  const [selectedIdx, setSelectedIdx] = useState(4); // Default to 25 mins
+  // Use ultra-short intervals for testing (e.g. 15 seconds, 30 seconds, 1 min)
+  // Switch back to [5, 10, 15...] once you see the notification fire!
+  const intervals = [0.25, 0.5, 1, 5, 10, 25, 50]; 
+  const [selectedIdx, setSelectedIdx] = useState(0); // Starts at 15-second test dial
   
   const [secondsLeft, setSecondsLeft] = useState(intervals[selectedIdx] * 60);
   const [isActive, setIsActive] = useState(false);
+  
   const timerRef = useRef(null);
+  const endTimeRef = useRef(null); 
+  const appStateRef = useRef(AppState.currentState);
 
-  // Request notification permissions on mount
   useEffect(() => {
     (async () => {
-      const { status } = await Notifications.getPermissionsAsync();
-      if (status !== 'granted') {
-        await Notifications.requestPermissionsAsync();
+      // 1. Explicitly request system-level user permissions
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+
+      // 2. Set up the default high-importance alert priority channel
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'default',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#6366F1',
+          sound: 'default',
+        });
       }
     })();
   }, []);
 
-  // Synchronize timer duration when the user changes the setting (while inactive)
   useEffect(() => {
     if (!isActive) {
       setSecondsLeft(intervals[selectedIdx] * 60);
     }
   }, [selectedIdx, isActive]);
 
-  // Main timer countdown logic
+  // Handle mathematical catch-up calculation when reopening the app
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState) => {
+      if (isActive && appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
+        if (endTimeRef.current) {
+          const now = Date.now();
+          const remaining = Math.max(0, Math.round((endTimeRef.current - now) / 1000));
+          
+          if (remaining <= 0) {
+            setIsActive(false);
+            setSecondsLeft(0);
+          } else {
+            setSecondsLeft(remaining);
+          }
+        }
+      }
+      appStateRef.current = nextAppState;
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => subscription.remove();
+  }, [isActive]);
+
+  // Main UI ticker interval
   useEffect(() => {
     if (isActive) {
       timerRef.current = setInterval(() => {
@@ -69,23 +109,40 @@ export default function App() {
     return () => clearInterval(timerRef.current);
   }, [isActive]);
 
-  // Handle Play / Pause / Stop
   const toggleTimer = async () => {
     if (isActive) {
-      // Pausing: Cancel scheduled notification alerts
       setIsActive(false);
+      endTimeRef.current = null;
       await Notifications.cancelAllScheduledNotificationsAsync();
     } else {
-      // Starting: Schedule a notification for when the timer hits zero
-      setIsActive(true);
       if (secondsLeft > 0) {
+        setIsActive(true);
+        
+        const nowMs = Date.now();
+        endTimeRef.current = nowMs + secondsLeft * 1000;
+
+        // 1. Schedule 10-Second Warning (Using an absolute Date instance trigger)
+        if (secondsLeft > 10) {
+          const warningDate = new Date(nowMs + (secondsLeft - 10) * 1000);
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: "Focus Session wrapping up...",
+              body: "10 seconds remaining!",
+              sound: true,
+            },
+            trigger: { date: warningDate },
+          });
+        }
+
+        // 2. Schedule Final Finished Alert
+        const completionDate = new Date(nowMs + secondsLeft * 1000);
         await Notifications.scheduleNotificationAsync({
           content: {
-            title: "Focus Session Complete!",
-            body: "Great job staying focused. Take a short break!",
+            title: "Focus Session Complete! 🔔",
+            body: "Great session. Time to clear your mind and take a break.",
             sound: true,
           },
-          trigger: { seconds: secondsLeft },
+          trigger: { date: completionDate },
         });
       }
     }
@@ -93,37 +150,31 @@ export default function App() {
 
   const resetTimer = async () => {
     setIsActive(false);
+    endTimeRef.current = null;
     await Notifications.cancelAllScheduledNotificationsAsync();
     setSecondsLeft(intervals[selectedIdx] * 60);
   };
 
-  // Adjust time via tap intervals (simulating a clean step-dial within the circle)
   const changeDuration = () => {
-    if (isActive) return; // Lock adjustment while running
+    if (isActive) return;
     const nextIdx = (selectedIdx + 1) % intervals.length;
     setSelectedIdx(nextIdx);
   };
 
-  // Helper formatting functions
   const formatTime = (totalSeconds) => {
     const mins = Math.floor(totalSeconds / 60);
     const secs = totalSeconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const totalDuration = intervals[selectedIdx] * 60;
-  const progressPercentage = totalDuration > 0 ? (secondsLeft / totalDuration) : 0;
-
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0B0B0F" />
       
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>FOCUS</Text>
       </View>
 
-      {/* Main Dial Interface */}
       <View style={styles.timerContainer}>
         <TouchableOpacity 
           activeOpacity={isActive ? 0.9 : 0.7}
@@ -133,20 +184,18 @@ export default function App() {
             { borderColor: isActive ? '#6366F1' : '#27272A' }
           ]}
         >
-          {/* Visual Progress Highlight Track */}
-          <View style={[styles.progressTrack, { opacity: isActive ? 0.05 : 0 }]} />
+          <View style={[styles.progressTrack, { opacity: isActive ? 0.04 : 0 }]} />
           
           <Text style={styles.timerText}>{formatTime(secondsLeft)}</Text>
           {!isActive && (
-            <Text style={styles.hintText}>Tap to change duration</Text>
+            <Text style={styles.hintText}>Tap to dial duration</Text>
           )}
           {isActive && (
-            <Text style={styles.runningText}>{intervals[selectedIdx]}m Target</Text>
+            <Text style={styles.runningText}>Target Active</Text>
           )}
         </TouchableOpacity>
       </View>
 
-      {/* Controls Footer */}
       <View style={styles.controlsContainer}>
         <TouchableOpacity style={styles.actionButton} onPress={toggleTimer}>
           <Play size={24} color={isActive ? '#EF4444' : '#10B981'} fill={isActive ? '#EF4444' : '#10B981'} />
@@ -167,7 +216,7 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0B0B0F', // Deep minimalist dark background
+    backgroundColor: '#0B0B0F',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 60,
