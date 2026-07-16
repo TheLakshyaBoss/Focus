@@ -18,14 +18,22 @@
       },
       "permissions": [
         "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.SCHEDULE_EXACT_ALARM",
         "android.permission.POST_NOTIFICATIONS"
-      ]
+      ],
+      "package": "com.lakshuishere.Focus"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-notifications"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "e1473554-fc22-4ee3-b87a-f0a9aaa38c76"
+      }
+    }
   }
 }
