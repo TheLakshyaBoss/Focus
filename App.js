@@ -13,16 +13,22 @@ import {
   ScrollView,
 } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { 
-  Play, 
-  Square, 
-  ChevronLeft, 
-  ChevronRight, 
-  BarChart2, 
-  Clock, 
+import {
+  useFonts,
+  TitilliumWeb_400Regular,
+  TitilliumWeb_600SemiBold,
+  TitilliumWeb_700Bold,
+} from '@expo-google-fonts/titillium-web';
+import {
+  Play,
+  Square,
+  ChevronLeft,
+  ChevronRight,
+  BarChart2,
+  Clock,
   PieChart as PieIcon,
   BookOpen,
-  Calendar
+  Calendar,
 } from 'lucide-react-native';
 import { supabase } from './lib/supabase';
 
@@ -48,15 +54,21 @@ Notifications.setNotificationHandler({
 });
 
 export default function App() {
-  const intervals = [0.25, 0.5, 1, 5, 10, 25, 50];
+  const [fontsLoaded] = useFonts({
+    TitilliumWeb_400Regular,
+    TitilliumWeb_600SemiBold,
+    TitilliumWeb_700Bold,
+  });
+
+  const intervals = [0.25, 10, 15, 30, 45, 60];
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(intervals[selectedIdx] * 60);
   const [isActive, setIsActive] = useState(false);
   const [sessions, setSessions] = useState([]);
-  
+
   const [selectedSubject, setSelectedSubject] = useState('Physics');
-  const [activeTab, setActiveTab] = useState('timer'); 
-  const [currentWeekOffset, setCurrentWeekOffset] = useState(0); 
+  const [activeTab, setActiveTab] = useState('timer');
+  const [currentWeekOffset, setCurrentWeekOffset] = useState(0);
 
   const timerRef = useRef(null);
   const endTimeRef = useRef(null);
@@ -104,11 +116,11 @@ export default function App() {
     fetchSessions();
   }, [fetchSessions]);
 
-  useEffect(() => {
-    if (!isActive) {
-      setSecondsLeft(intervals[selectedIdx] * 60);
-    }
-  }, [selectedIdx, isActive]);
+  // NOTE: previously this effect also depended on `isActive`, which meant
+  // pausing (isActive -> false) reset secondsLeft back to full duration.
+  // It now only reacts to changes in `sessions`... removed. Duration reset
+  // is handled explicitly in changeDuration() below, so pausing no longer
+  // touches secondsLeft.
 
   useEffect(() => {
     const handleAppStateChange = (nextAppState) => {
@@ -178,6 +190,7 @@ export default function App() {
 
   const toggleTimer = async () => {
     if (isActive) {
+      // Pause: stop the interval but KEEP secondsLeft as-is.
       setIsActive(false);
       endTimeRef.current = null;
       await Notifications.cancelAllScheduledNotificationsAsync();
@@ -245,6 +258,9 @@ export default function App() {
     if (isActive) return;
     const nextIdx = (selectedIdx + 1) % intervals.length;
     setSelectedIdx(nextIdx);
+    // Reset happens here explicitly, only when duration is actually changed
+    // while stopped — not on every pause/resume.
+    setSecondsLeft(intervals[nextIdx] * 60);
   };
 
   const changeSubject = () => {
@@ -271,7 +287,7 @@ export default function App() {
   const getWeekRange = (weekOffset) => {
     const startOfWeek = new Date();
     const day = startOfWeek.getDay();
-    const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); 
+    const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
     startOfWeek.setDate(diff + (weekOffset * 7));
     startOfWeek.setHours(0, 0, 0, 0);
 
@@ -285,7 +301,7 @@ export default function App() {
   const getAnalyticsData = () => {
     const { startOfWeek, endOfWeek } = getWeekRange(currentWeekOffset);
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    
+
     const weeklyData = days.map((day, idx) => {
       const date = new Date(startOfWeek);
       date.setDate(startOfWeek.getDate() + idx);
@@ -307,7 +323,7 @@ export default function App() {
       if (sessionDate >= startOfWeek && sessionDate <= endOfWeek) {
         const secs = session.actual_duration_seconds || 0;
         const dayIdx = sessionDate.getDay() === 0 ? 6 : sessionDate.getDay() - 1;
-        
+
         weeklyData[dayIdx].totalSeconds += secs;
         totalDurationInWeek += secs;
 
@@ -320,6 +336,10 @@ export default function App() {
     return { weeklyData, totalDurationInWeek, subjectSummary, startOfWeek, endOfWeek };
   };
 
+  if (!fontsLoaded) {
+    return <View style={styles.container} />;
+  }
+
   const { weeklyData, totalDurationInWeek, subjectSummary, startOfWeek, endOfWeek } = getAnalyticsData();
   const maxSecondsInDay = Math.max(...weeklyData.map((d) => d.totalSeconds), 60);
 
@@ -330,14 +350,14 @@ export default function App() {
       {/* Clean Global Tab Navigation Header */}
       <View style={styles.header}>
         <View style={styles.headerTabWrapper}>
-          <TouchableOpacity 
-            onPress={() => setActiveTab('timer')} 
+          <TouchableOpacity
+            onPress={() => setActiveTab('timer')}
             style={[styles.tabButton, activeTab === 'timer' && styles.activeTabButton]}
           >
             <Text style={[styles.tabText, activeTab === 'timer' && styles.activeTabText]}>Timer</Text>
           </TouchableOpacity>
-          <TouchableOpacity 
-            onPress={() => setActiveTab('analytics')} 
+          <TouchableOpacity
+            onPress={() => setActiveTab('analytics')}
             style={[styles.tabButton, activeTab === 'analytics' && styles.activeTabButton]}
           >
             <Text style={[styles.tabText, activeTab === 'analytics' && styles.activeTabText]}>Analytics</Text>
@@ -356,25 +376,25 @@ export default function App() {
                 { borderColor: isActive ? SUBJECT_COLORS[selectedSubject].primary : '#1F1F24' },
               ]}
             >
-              <View 
+              <View
                 style={[
-                  styles.progressTrack, 
-                  { 
+                  styles.progressTrack,
+                  {
                     backgroundColor: SUBJECT_COLORS[selectedSubject].primary,
-                    opacity: isActive ? 0.03 : 0 
-                  }
-                ]} 
+                    opacity: isActive ? 0.03 : 0,
+                  },
+                ]}
               />
 
               <Text style={styles.timerText}>{formatTime(secondsLeft)}</Text>
-              
+
               {!isActive ? (
-                <TouchableOpacity 
-                  onPress={changeSubject} 
+                <TouchableOpacity
+                  onPress={changeSubject}
                   activeOpacity={0.7}
                   style={[
-                    styles.subjectSelectorBadge, 
-                    { backgroundColor: SUBJECT_COLORS[selectedSubject].light }
+                    styles.subjectSelectorBadge,
+                    { backgroundColor: SUBJECT_COLORS[selectedSubject].light },
                   ]}
                 >
                   <BookOpen size={13} color={SUBJECT_COLORS[selectedSubject].text} style={{ marginRight: 6 }} />
@@ -387,8 +407,6 @@ export default function App() {
                   {selectedSubject}
                 </Text>
               )}
-              
-              {/* {!isActive && <Text style={styles.hintText}>Tap dial to change duration</Text>} */}
             </TouchableOpacity>
           </View>
 
@@ -452,7 +470,7 @@ export default function App() {
         <ScrollView contentContainerStyle={styles.analyticsScrollContainer} showsVerticalScrollIndicator={false}>
           {/* Week Selector */}
           <View style={styles.weekSelectorContainer}>
-            <TouchableOpacity onPress={() => setCurrentWeekOffset(prev => prev - 1)} style={styles.navButton}>
+            <TouchableOpacity onPress={() => setCurrentWeekOffset((prev) => prev - 1)} style={styles.navButton}>
               <ChevronLeft size={16} color="#A1A1AA" />
             </TouchableOpacity>
             <View style={styles.weekRangeWrapper}>
@@ -461,8 +479,8 @@ export default function App() {
                 {startOfWeek.toLocaleDateString([], { month: 'short', day: 'numeric' })} — {endOfWeek.toLocaleDateString([], { month: 'short', day: 'numeric' })}
               </Text>
             </View>
-            <TouchableOpacity 
-              onPress={() => setCurrentWeekOffset(prev => Math.min(0, prev + 1))} 
+            <TouchableOpacity
+              onPress={() => setCurrentWeekOffset((prev) => Math.min(0, prev + 1))}
               style={[styles.navButton, currentWeekOffset === 0 && { opacity: 0.2 }]}
               disabled={currentWeekOffset === 0}
             >
@@ -510,7 +528,7 @@ export default function App() {
             </View>
             <View style={styles.barGraphContainer}>
               {weeklyData.map((data, index) => {
-                const total = data.totalSeconds || 1; 
+                const total = data.totalSeconds || 1;
                 const phyPercent = (data.Physics / total) * 100;
                 const chemPercent = (data.Chemistry / total) * 100;
                 const mathPercent = (data.Maths / total) * 100;
@@ -580,6 +598,12 @@ export default function App() {
   );
 }
 
+// Font shortcuts (Titillium Web — the F1 broadcast/HUD typeface: clean,
+// technical, and highly legible for numbers/data even at small sizes)
+const FONT_REGULAR = 'TitilliumWeb_400Regular';
+const FONT_SEMIBOLD = 'TitilliumWeb_600SemiBold';
+const FONT_BOLD = 'TitilliumWeb_700Bold';
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -609,7 +633,7 @@ const styles = StyleSheet.create({
   tabText: {
     color: '#52525B',
     fontSize: 14,
-    fontWeight: '600',
+    fontFamily: FONT_SEMIBOLD,
     letterSpacing: 0.5,
   },
   activeTabText: {
@@ -641,7 +665,7 @@ const styles = StyleSheet.create({
   timerText: {
     color: '#FFFFFF',
     fontSize: 58,
-    fontWeight: '300',
+    fontFamily: FONT_REGULAR,
     fontVariant: ['tabular-nums'],
     letterSpacing: -0.5,
   },
@@ -657,19 +681,20 @@ const styles = StyleSheet.create({
   },
   subjectSelectorText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: FONT_SEMIBOLD,
     letterSpacing: 0.2,
   },
   hintText: {
     color: '#3F3F46',
     marginTop: 12,
     fontSize: 11,
+    fontFamily: FONT_REGULAR,
     letterSpacing: 0.2,
   },
   runningText: {
     marginTop: 18,
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: FONT_SEMIBOLD,
     letterSpacing: 0.5,
     textTransform: 'uppercase',
   },
@@ -696,7 +721,7 @@ const styles = StyleSheet.create({
   actionText: {
     color: '#F4F4F5',
     fontSize: 14,
-    fontWeight: '600',
+    fontFamily: FONT_SEMIBOLD,
   },
   historyContainer: {
     marginTop: 48,
@@ -705,7 +730,7 @@ const styles = StyleSheet.create({
   historyTitle: {
     color: '#4A4A52',
     fontSize: 11,
-    fontWeight: '700',
+    fontFamily: FONT_BOLD,
     marginBottom: 16,
     letterSpacing: 1.5,
   },
@@ -729,7 +754,7 @@ const styles = StyleSheet.create({
   historyDate: {
     color: '#D4D4D8',
     fontSize: 13,
-    fontWeight: '500',
+    fontFamily: FONT_REGULAR,
   },
   historySubjectBadge: {
     paddingHorizontal: 8,
@@ -738,20 +763,22 @@ const styles = StyleSheet.create({
   },
   historySubjectBadgeText: {
     fontSize: 11,
-    fontWeight: '600',
+    fontFamily: FONT_SEMIBOLD,
   },
   historyDuration: {
     color: '#FFFFFF',
     fontSize: 14,
-    fontWeight: '600',
+    fontFamily: FONT_SEMIBOLD,
+    fontVariant: ['tabular-nums'],
   },
   historyStatus: {
     fontSize: 11,
-    fontWeight: '500',
+    fontFamily: FONT_REGULAR,
   },
   emptyText: {
     color: '#3F3F46',
     fontSize: 13,
+    fontFamily: FONT_REGULAR,
     marginTop: 8,
   },
   analyticsScrollContainer: {
@@ -778,7 +805,7 @@ const styles = StyleSheet.create({
   weekRangeText: {
     color: '#E4E4E7',
     fontSize: 14,
-    fontWeight: '600',
+    fontFamily: FONT_SEMIBOLD,
   },
   statPanel: {
     flexDirection: 'row',
@@ -794,14 +821,15 @@ const styles = StyleSheet.create({
   statLabel: {
     color: '#71717A',
     fontSize: 12,
-    fontWeight: '500',
+    fontFamily: FONT_REGULAR,
   },
   statValue: {
     color: '#FFFFFF',
     fontSize: 26,
-    fontWeight: '700',
+    fontFamily: FONT_BOLD,
     marginTop: 6,
     letterSpacing: -0.5,
+    fontVariant: ['tabular-nums'],
   },
   card: {
     backgroundColor: '#0D0D12',
@@ -819,7 +847,7 @@ const styles = StyleSheet.create({
   cardTitle: {
     color: '#E4E4E7',
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: FONT_SEMIBOLD,
     letterSpacing: 0.3,
   },
   barGraphContainer: {
@@ -835,8 +863,9 @@ const styles = StyleSheet.create({
   barValueText: {
     color: '#52525B',
     fontSize: 9,
-    fontWeight: '600',
+    fontFamily: FONT_SEMIBOLD,
     marginBottom: 6,
+    fontVariant: ['tabular-nums'],
   },
   barTrack: {
     width: 10,
@@ -857,12 +886,13 @@ const styles = StyleSheet.create({
   barLabel: {
     color: '#A1A1AA',
     fontSize: 11,
-    fontWeight: '600',
+    fontFamily: FONT_SEMIBOLD,
     marginTop: 10,
   },
   barSubLabel: {
     color: '#3F3F46',
     fontSize: 8,
+    fontFamily: FONT_REGULAR,
     marginTop: 2,
   },
   legendContainer: {
@@ -884,7 +914,7 @@ const styles = StyleSheet.create({
   legendText: {
     color: '#71717A',
     fontSize: 11,
-    fontWeight: '500',
+    fontFamily: FONT_REGULAR,
   },
   pieContainer: {
     alignItems: 'center',
@@ -915,16 +945,18 @@ const styles = StyleSheet.create({
   pieStatSubject: {
     color: '#E4E4E7',
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: FONT_SEMIBOLD,
   },
   pieStatMeta: {
     color: '#52525B',
     fontSize: 11,
+    fontFamily: FONT_REGULAR,
     marginTop: 2,
   },
   piePercentText: {
     color: '#FFFFFF',
     fontSize: 15,
-    fontWeight: '700',
+    fontFamily: FONT_BOLD,
+    fontVariant: ['tabular-nums'],
   },
 });
