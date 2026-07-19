@@ -4,17 +4,14 @@
     "slug": "Focus",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/FocusLogo.png",
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#E6F4FE"
       },
       "permissions": [
         "android.permission.SCHEDULE_EXACT_ALARM",
@@ -25,7 +22,7 @@
       "package": "com.lakshuishere.Focus"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assests/FocusLogo.png"
     },
     "plugins": [
       "expo-notifications",
