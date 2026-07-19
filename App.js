@@ -29,6 +29,7 @@ import {
   PieChart as PieIcon,
   BookOpen,
   Calendar,
+  Sun,
 } from 'lucide-react-native';
 import { supabase } from './lib/supabase';
 
@@ -69,6 +70,7 @@ export default function App() {
   const [selectedSubject, setSelectedSubject] = useState('Physics');
   const [activeTab, setActiveTab] = useState('timer');
   const [currentWeekOffset, setCurrentWeekOffset] = useState(0);
+  const [selectedDayIndex, setSelectedDayIndex] = useState(null);
 
   const timerRef = useRef(null);
   const endTimeRef = useRef(null);
@@ -121,6 +123,15 @@ export default function App() {
   // It now only reacts to changes in `sessions`... removed. Duration reset
   // is handled explicitly in changeDuration() below, so pausing no longer
   // touches secondsLeft.
+
+  // Keep the selected analytics day in sync with the week being viewed:
+  // default to "today" when looking at the current week, otherwise
+  // default to the last day of that past week.
+  useEffect(() => {
+    const now = new Date();
+    const todayIdx = now.getDay() === 0 ? 6 : now.getDay() - 1;
+    setSelectedDayIndex(currentWeekOffset === 0 ? todayIdx : 6);
+  }, [currentWeekOffset]);
 
   useEffect(() => {
     const handleAppStateChange = (nextAppState) => {
@@ -270,18 +281,40 @@ export default function App() {
     setSelectedSubject(SUBJECTS[nextIdx]);
   };
 
+  // Countdown display for the main dial — always MM:SS.
   const formatTime = (totalSeconds) => {
     const mins = Math.floor(totalSeconds / 60);
     const secs = Math.floor(totalSeconds % 60);
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Human-friendly duration display used everywhere else — e.g. "1h 30m", "45m".
+  const formatDuration = (totalSeconds) => {
+    const secondsSafe = Math.max(0, Math.round(totalSeconds || 0));
+    const hours = Math.floor(secondsSafe / 3600);
+    const mins = Math.floor((secondsSafe % 3600) / 60);
+    if (hours > 0) {
+      return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+    }
+    if (mins > 0) return `${mins}m`;
+    return `${secondsSafe}s`;
+  };
+
   const formatSessionRow = (item) => {
     const started = new Date(item.started_at);
     const dateLabel = started.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    const timeLabel = started.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const durationLabel = item.actual_duration_seconds ? formatTime(item.actual_duration_seconds) : '00:00';
-    return { dateLabel, timeLabel, durationLabel };
+    const startTimeLabel = started.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    let endTimeLabel = '';
+    if (item.stopped_at) {
+      endTimeLabel = new Date(item.stopped_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } else if (item.actual_duration_seconds) {
+      const estimatedEnd = new Date(started.getTime() + item.actual_duration_seconds * 1000);
+      endTimeLabel = estimatedEnd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    const durationLabel = item.actual_duration_seconds ? formatDuration(item.actual_duration_seconds) : '0m';
+    return { dateLabel, startTimeLabel, endTimeLabel, durationLabel };
   };
 
   const getWeekRange = (weekOffset) => {
@@ -298,6 +331,22 @@ export default function App() {
     return { startOfWeek, endOfWeek };
   };
 
+  const getTodayTotal = () => {
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const endOfDay = new Date(startOfDay);
+    endOfDay.setDate(endOfDay.getDate() + 1);
+
+    let total = 0;
+    sessions.forEach((session) => {
+      const started = new Date(session.started_at);
+      if (started >= startOfDay && started < endOfDay) {
+        total += session.actual_duration_seconds || 0;
+      }
+    });
+    return total;
+  };
+
   const getAnalyticsData = () => {
     const { startOfWeek, endOfWeek } = getWeekRange(currentWeekOffset);
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -308,6 +357,7 @@ export default function App() {
       return {
         day,
         dateString: date.toLocaleDateString([], { month: 'numeric', day: 'numeric' }),
+        fullLabel: date.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }),
         totalSeconds: 0,
         Physics: 0,
         Chemistry: 0,
@@ -342,6 +392,13 @@ export default function App() {
 
   const { weeklyData, totalDurationInWeek, subjectSummary, startOfWeek, endOfWeek } = getAnalyticsData();
   const maxSecondsInDay = Math.max(...weeklyData.map((d) => d.totalSeconds), 60);
+  const todayTotal = getTodayTotal();
+
+  const safeSelectedIndex =
+    selectedDayIndex !== null && selectedDayIndex >= 0 && selectedDayIndex < weeklyData.length
+      ? selectedDayIndex
+      : 0;
+  const selectedDay = weeklyData[safeSelectedIndex];
 
   return (
     <View style={styles.container}>
@@ -410,6 +467,17 @@ export default function App() {
             </TouchableOpacity>
           </View>
 
+          {/* Today's Focus Summary Card */}
+          <View style={styles.todayCard}>
+            <View style={styles.todayCardIconWrap}>
+              <Sun size={16} color="#FBBF24" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.todayCardLabel}>Today's Focus</Text>
+              <Text style={styles.todayCardValue}>{formatDuration(todayTotal)}</Text>
+            </View>
+          </View>
+
           {/* Clean Functional Controls */}
           <View style={styles.controlsContainer}>
             <TouchableOpacity style={styles.actionButton} onPress={toggleTimer}>
@@ -438,14 +506,16 @@ export default function App() {
               scrollEnabled={false}
               keyExtractor={(item) => item.id}
               renderItem={({ item }) => {
-                const { dateLabel, timeLabel, durationLabel } = formatSessionRow(item);
+                const { dateLabel, startTimeLabel, endTimeLabel, durationLabel } = formatSessionRow(item);
                 const sub = item.subject || 'Physics';
                 const colorConfig = SUBJECT_COLORS[sub] || SUBJECT_COLORS.Physics;
 
                 return (
                   <View style={styles.historyRow}>
                     <View style={styles.historyLeftBlock}>
-                      <Text style={styles.historyDate}>{dateLabel} · {timeLabel}</Text>
+                      <Text style={styles.historyDate}>
+                        {dateLabel} · {startTimeLabel}{endTimeLabel ? ` - ${endTimeLabel}` : ''}
+                      </Text>
                       <View style={[styles.historySubjectBadge, { backgroundColor: colorConfig.light }]}>
                         <Text style={[styles.historySubjectBadgeText, { color: colorConfig.text }]}>
                           {sub}
@@ -492,29 +562,47 @@ export default function App() {
           <View style={styles.statPanel}>
             <View>
               <Text style={styles.statLabel}>Total Focus Registered</Text>
-              <Text style={styles.statValue}>{formatTime(totalDurationInWeek)}</Text>
+              <Text style={styles.statValue}>{formatDuration(totalDurationInWeek)}</Text>
             </View>
             <Clock size={28} color="#6366F1" style={{ opacity: 0.9 }} />
           </View>
 
-          {/* GRAPH 1: Weekly Productivity */}
+          {/* GRAPH 1: Weekly Productivity — tap a day to see its total */}
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <BarChart2 size={16} color="#6366F1" style={{ marginRight: 8 }} />
               <Text style={styles.cardTitle}>Daily Productivity</Text>
             </View>
+
+            <View style={styles.selectedDayHeader}>
+              <Text style={styles.selectedDayValue}>{formatDuration(selectedDay?.totalSeconds || 0)}</Text>
+              <Text style={styles.selectedDayLabel}>{selectedDay?.fullLabel || ''}</Text>
+            </View>
+
             <View style={styles.barGraphContainer}>
               {weeklyData.map((data, index) => {
                 const percentHeight = Math.max(4, (data.totalSeconds / maxSecondsInDay) * 100);
+                const isSelected = safeSelectedIndex === index;
                 return (
-                  <View key={index} style={styles.barCol}>
-                    <Text style={styles.barValueText}>{Math.round(data.totalSeconds / 60)}m</Text>
+                  <TouchableOpacity
+                    key={index}
+                    style={styles.barCol}
+                    activeOpacity={0.7}
+                    onPress={() => setSelectedDayIndex(index)}
+                  >
                     <View style={styles.barTrack}>
-                      <View style={[styles.barFill, { height: `${percentHeight}%` }]} />
+                      <View
+                        style={[
+                          styles.barFill,
+                          {
+                            height: `${percentHeight}%`,
+                            backgroundColor: isSelected ? '#6366F1' : 'rgba(99, 102, 241, 0.22)',
+                          },
+                        ]}
+                      />
                     </View>
-                    <Text style={styles.barLabel}>{data.day}</Text>
-                    <Text style={styles.barSubLabel}>{data.dateString}</Text>
-                  </View>
+                    <Text style={[styles.barLabel, isSelected && styles.barLabelActive]}>{data.day}</Text>
+                  </TouchableOpacity>
                 );
               })}
             </View>
@@ -581,7 +669,7 @@ export default function App() {
                           <View style={[styles.statBorderLine, { backgroundColor: SUBJECT_COLORS[sub].primary }]} />
                           <View style={{ flex: 1 }}>
                             <Text style={styles.pieStatSubject}>{sub}</Text>
-                            <Text style={styles.pieStatMeta}>{formatTime(subjectSummary[sub])}</Text>
+                            <Text style={styles.pieStatMeta}>{formatDuration(subjectSummary[sub])}</Text>
                           </View>
                           <Text style={styles.piePercentText}>{Math.round(share)}%</Text>
                         </View>
@@ -667,7 +755,7 @@ const styles = StyleSheet.create({
     fontSize: 58,
     fontFamily: FONT_REGULAR,
     fontVariant: ['tabular-nums'],
-    letterSpacing: -0.5,
+    letterSpacing: -1.5,
   },
   subjectSelectorBadge: {
     flexDirection: 'row',
@@ -698,10 +786,44 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     textTransform: 'uppercase',
   },
+  todayCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 28,
+    marginHorizontal: 24,
+    backgroundColor: '#0D0D12',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#121217',
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+  },
+  todayCardIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: 'rgba(251, 191, 36, 0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  todayCardLabel: {
+    color: '#71717A',
+    fontSize: 12,
+    fontFamily: FONT_REGULAR,
+  },
+  todayCardValue: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontFamily: FONT_BOLD,
+    marginTop: 2,
+    letterSpacing: -0.2,
+    fontVariant: ['tabular-nums'],
+  },
   controlsContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 48,
+    marginTop: 28,
     gap: 16,
   },
   actionButton: {
@@ -842,7 +964,7 @@ const styles = StyleSheet.create({
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   cardTitle: {
     color: '#E4E4E7',
@@ -850,10 +972,26 @@ const styles = StyleSheet.create({
     fontFamily: FONT_SEMIBOLD,
     letterSpacing: 0.3,
   },
+  selectedDayHeader: {
+    marginBottom: 20,
+  },
+  selectedDayValue: {
+    color: '#FFFFFF',
+    fontSize: 30,
+    fontFamily: FONT_BOLD,
+    letterSpacing: -0.5,
+    fontVariant: ['tabular-nums'],
+  },
+  selectedDayLabel: {
+    color: '#71717A',
+    fontSize: 13,
+    fontFamily: FONT_REGULAR,
+    marginTop: 4,
+  },
   barGraphContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    height: 140,
+    height: 130,
     alignItems: 'flex-end',
   },
   barCol: {
@@ -868,26 +1006,28 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   barTrack: {
-    width: 10,
+    width: 15,
     height: 90,
     backgroundColor: '#14141A',
-    borderRadius: 99,
+    borderRadius: 2,
     overflow: 'hidden',
     justifyContent: 'flex-end',
   },
   barFill: {
     width: '100%',
-    backgroundColor: '#6366F1',
-    borderRadius: 99,
+    borderRadius: 2,
   },
   barSegment: {
     width: '100%',
   },
   barLabel: {
-    color: '#A1A1AA',
+    color: '#71717A',
     fontSize: 11,
     fontFamily: FONT_SEMIBOLD,
     marginTop: 10,
+  },
+  barLabelActive: {
+    color: '#F4F4F5',
   },
   barSubLabel: {
     color: '#3F3F46',
